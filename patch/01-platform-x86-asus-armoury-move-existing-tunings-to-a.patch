@@ -1,0 +1,157 @@
+From c3702b29b71fa12203c9c59a51644c9ed7c5829b Mon Sep 17 00:00:00 2001
+From: "Luke D. Jones" <luke@ljones.dev>
+Date: Thu, 30 May 2024 13:20:11 +1200
+Subject: [PATCH] platform/x86: asus-armoury: move existing tunings to
+ asus-armoury module
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The fw_attributes_class provides a much cleaner interface to all of the
+attributes introduced to asus-wmi. This patch moves all of these extra
+attributes over to fw_attributes_class, and shifts the bulk of these
+definitions to a new kernel module to reduce the clutter of asus-wmi
+with the intention of deprecating the asus-wmi attributes in future.
+
+The work applies only to WMI methods which don't have a clearly defined
+place within the sysfs and as a result ended up lumped together in
+/sys/devices/platform/asus-nb-wmi/ with no standard API.
+
+Where possible the fw attrs now implement defaults, min, max, scalar,
+choices, etc. As en example dgpu_disable becomes:
+
+/sys/class/firmware-attributes/asus-armoury/attributes/dgpu_disable/
+├── current_value
+├── display_name
+├── possible_values
+└── type
+
+as do other attributes.
+
+Signed-off-by: Luke D. Jones <luke@ljones.dev>
+---
+ drivers/platform/x86/asus-wmi.c            |  51 +-
+ drivers/platform/x86/asus-wmi.h            |  14 +
+ include/linux/platform_data/x86/asus-wmi.h |  11 +
+ 3 files changed, 60 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/platform/x86/asus-wmi.c b/drivers/platform/x86/asus-wmi.c
+index 05f1ba5c42bf9e..1c22ff1e1f2fd2 100644
+--- a/drivers/platform/x86/asus-wmi.c
++++ b/drivers/platform/x86/asus-wmi.c
+@@ -551,12 +537,59 @@ static int asus_wmi_get_devstate(struct asus_wmi *asus, u32 dev_id, u32 *retval)
+ 	return 0;
+ }
+ 
+-static int asus_wmi_set_devstate(u32 dev_id, u32 ctrl_param,
+-				 u32 *retval)
++/**
++ * asus_wmi_get_devstate_dsts() - Get the WMI function state.
++ * @dev_id: The WMI function to call.
++ * @retval: A pointer to where to store the value returned from WMI.
++ *
++ * The returned WMI function state can also be used to determine if the WMI
++ * function is supported by checking if the asus_wmi_get_devstate_dsts()
++ * returns an error.
++ *
++ * On success the return value is 0, and the retval is a valid value returned
++ * by the successful WMI function call. An error value is returned only if the
++ * WMI function failed, or if it returns "unsupported" which is typically a 0
++ * (no return, and no 'supported' bit set), or a 0xFFFFFFFE (~1) which if not
++ * caught here can result in unexpected behaviour later.
++ */
++int asus_wmi_get_devstate_dsts(u32 dev_id, u32 *retval)
++ {
++	int err;
++
++	err = asus_wmi_evaluate_method(ASUS_WMI_METHODID_DSTS, dev_id, 0, retval);
++	*retval &= ~ASUS_WMI_DSTS_PRESENCE_BIT;
++
++	if (err)
++		return err;
++	/* Be explicit about retval */
++	if (*retval == ASUS_WMI_UNSUPPORTED_METHOD)
++		return -ENODEV;
++
++	return 0;
++ }
++
++EXPORT_SYMBOL_GPL(asus_wmi_get_devstate_dsts);
++
++/**
++ * asus_wmi_set_devstate() - Set the WMI function state.
++ * @dev_id: The WMI function to call.
++ * @ctrl_param: The argument to be used for this WMI function.
++ * @retval: A pointer to where to store the value returned from WMI.
++ *
++ * The returned WMI function state if not checked here for error as
++ * asus_wmi_set_devstate() is not called unless first paired with a call to
++ * asus_wmi_get_devstate_dsts() to check that the WMI function is supported.
++ *
++ * On success the return value is 0, and the retval is a valid value returned
++ * by the successful WMI function call. An error value is returned only if the
++ * WMI function failed.
++ */
++int asus_wmi_set_devstate(u32 dev_id, u32 ctrl_param, u32 *retval)
+ {
+ 	return asus_wmi_evaluate_method(ASUS_WMI_METHODID_DEVS, dev_id,
+ 					ctrl_param, retval);
+ }
++EXPORT_SYMBOL_GPL(asus_wmi_set_devstate);
+ 
+ /* Helper for special devices with magic return codes */
+ static int asus_wmi_get_devstate_bits(struct asus_wmi *asus,
+diff --git a/drivers/platform/x86/asus-wmi.h b/drivers/platform/x86/asus-wmi.h
+index cc30f185384723..e8b8ebc77ebf5f 100644
+--- a/drivers/platform/x86/asus-wmi.h
++++ b/drivers/platform/x86/asus-wmi.h
+@@ -85,4 +85,18 @@ struct asus_wmi_driver {
+ int asus_wmi_register_driver(struct asus_wmi_driver *driver);
+ void asus_wmi_unregister_driver(struct asus_wmi_driver *driver);
+ 
++static const struct dmi_system_id asus_rog_ally_device[] = {
++	{
++		.matches = {
++			DMI_MATCH(DMI_BOARD_NAME, "RC71L"),
++		},
++	},
++	{
++		.matches = {
++			DMI_MATCH(DMI_BOARD_NAME, "RC72L"),
++		},
++	},
++	{ },
++};
++
+ #endif /* !_ASUS_WMI_H_ */
+diff --git a/include/linux/platform_data/x86/asus-wmi.h b/include/linux/platform_data/x86/asus-wmi.h
+index 8e7fc84a8f7dbd..0fabef8fe490a7 100644
+--- a/include/linux/platform_data/x86/asus-wmi.h
++++ b/include/linux/platform_data/x86/asus-wmi.h
+@@ -68,6 +68,7 @@
+ #define ASUS_WMI_DEVID_THROTTLE_THERMAL_POLICY_VIVO 0x00110019
+ 
+ /* Misc */
++#define ASUS_WMI_DEVID_PANEL_HD		0x0005001C
+ #define ASUS_WMI_DEVID_PANEL_OD		0x00050019
+ #define ASUS_WMI_DEVID_CAMERA		0x00060013
+ #define ASUS_WMI_DEVID_LID_FLIP		0x00060062
+@@ -153,8 +154,18 @@
+ #define ASUS_WMI_DSTS_LIGHTBAR_MASK	0x0000000F
+ 
+ #if IS_REACHABLE(CONFIG_ASUS_WMI)
++int asus_wmi_get_devstate_dsts(u32 dev_id, u32 *retval);
++int asus_wmi_set_devstate(u32 dev_id, u32 ctrl_param, u32 *retval);
+ int asus_wmi_evaluate_method(u32 method_id, u32 arg0, u32 arg1, u32 *retval);
+ #else
++static inline int asus_wmi_get_devstate_dsts(u32 dev_id, u32 *retval)
++{
++	return -ENODEV;
++}
++static inline int asus_wmi_set_devstate(u32 dev_id, u32 ctrl_param, u32 *retval)
++{
++	return -ENODEV;
++}
+ static inline int asus_wmi_evaluate_method(u32 method_id, u32 arg0, u32 arg1,
+ 					   u32 *retval)
+ {
