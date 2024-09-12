@@ -1,0 +1,28 @@
+From 8d202dcdb3f44dc3d63c7fffb867e908657f98fc Mon Sep 17 00:00:00 2001
+From: "Luke D. Jones" <luke@ljones.dev>
+Date: Sun, 2 Jun 2024 14:44:31 +1200
+Subject: [PATCH] platform/x86: asus-armoury: add apu-mem control support
+
+Implement the APU memory size control under the asus-armoury module using
+the fw_attributes class.
+
+This allows the APU allocated memory size to be adjusted depending on
+the users priority. A reboot is required after change.
+
+Signed-off-by: Luke D. Jones <luke@ljones.dev>
+---
+ include/linux/platform_data/x86/asus-wmi.h |   1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/include/linux/platform_data/x86/asus-wmi.h b/include/linux/platform_data/x86/asus-wmi.h
+index 196af54a52b038..e37972a53c11ec 100644
+--- a/include/linux/platform_data/x86/asus-wmi.h
++++ b/include/linux/platform_data/x86/asus-wmi.h
+@@ -131,6 +131,7 @@
+ 
+ #define ASUS_WMI_DEVID_DGPU_BASE_TGP	0x00120099
+ #define ASUS_WMI_DEVID_DGPU_SET_TGP	0x00120098
++#define ASUS_WMI_DEVID_APU_MEM		0x000600C1
+ 
+ /* gpu mux switch, 0 = dGPU, 1 = Optimus */
+ #define ASUS_WMI_DEVID_GPU_MUX		0x00090016
